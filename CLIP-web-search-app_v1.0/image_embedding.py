@@ -13,6 +13,7 @@ path_dir = os.path.join(os.getcwd(), 'images')
 
 jpg_files = glob.glob(path_dir + '/*.jpg')
 print(f'총 {len(jpg_files)}개 이미지 파일을 찾았습니다.')
+print(jpg_files)
 
 def Embedding_process(image_paths):
     # hugging face에서 clip 사전학습 모델 불러오기
