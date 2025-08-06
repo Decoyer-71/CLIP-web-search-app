@@ -11,7 +11,10 @@
 
 ## 3. 프로젝트 구조
   - app.py : Streamlit 웹앱 실행 및 사용자 이미지 검색 로직 구현
-  - image_embedding.py : 수집된 이미지 데이터에 대해 사전 CLIP processor를 통한 이미지 
+  - image_embedding.py : 수집된 이미지 데이터에 대하여 CLIP processor를 통한 이미지 임베딩 처리
+  - image_embeddings.npy : image_embedding.py에서 임베딩된 이미지 벡터의 numpy 배열형태 저장파일
+  - image_paths.pkl : 이미지가 존재하는 디렉토리 경로가 리스트로 저장된 파일
+  - images.zip : google에서 수집한 dog, cat, man, human, car, train 등 50개 이미지의 zip파일
   - requirement.txt : 필요한 라이브러리 목록
 
 ## 4. 설치 및 실행방법
@@ -33,13 +36,14 @@
   </code>
 </pre>
 
-### 3) 모델 훈련
+### 3) images.zip 압축풀기
   - bash
 <pre>
   <code>
-  python train.py
+  unzip images.zip
   </code>
 </pre>
+- 또는 폴더에서 직접 압축풀기
 
 ### 4) 웹 앱 실행
   - bash
