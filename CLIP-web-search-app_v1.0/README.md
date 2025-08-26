@@ -56,6 +56,7 @@
   - 실제 웹 페이지 예시화면
     <br></br>
     + ① 웹 실행 - 사용자 텍스트 입력준비
+      
       <img width="650" height="450" alt="image" src="https://github.com/user-attachments/assets/1e4625ab-937a-417a-b734-114623ee0842" />
       <br></br>
     + ② 웹 검색결과 - 상위 5개 유사도 결과 제공 및 이미지 전시
