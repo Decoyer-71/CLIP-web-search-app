@@ -1,68 +1,75 @@
-import pandas as pd
 import numpy as np
 import os, glob, pickle
 from PIL import Image
-
-# cLIP 모델 불러오기
 import torch
 from transformers import CLIPProcessor, CLIPModel
+from tqdm import tqdm
 
 ###############################################################
-# 각 폴더 경로 정의
-img_path_dir = os.path.join(os.getcwd(), 'images_100')
-augmented_img_path_dir = os.path.join(img_path_dir, 'augmented_images')
 
-# 모든 파일경로 담기
-all_image_files = []
+def get_all_image_paths(base_dir):
+    """원본 및 증강된 이미지 파일 경로를 모두 수집합니다."""
+    img_path_dir = os.path.join(base_dir, 'images_100')
+    augmented_img_path_dir = os.path.join(img_path_dir, 'augmented_images')
+    
+    all_image_files = []
+    search_dirs = [img_path_dir, augmented_img_path_dir]
+    extensions = ['*.jpg', '*.jpeg', '*.png']
 
-# 검색할 폴더와 확장자 리스트
-search_dirs = [img_path_dir, augmented_img_path_dir]
-extensions = ['*.jpg', '*.jpeg']
+    for directory in search_dirs:
+        if not os.path.exists(directory):
+            print(f"경고: 디렉토리가 존재하지 않습니다: {directory}")
+            continue
+        for ext in extensions:
+            all_image_files.extend(glob.glob(os.path.join(directory, ext)))
+            
+    return sorted(list(set(all_image_files)))
 
-for directoty in search_dirs:
-    for ext in extensions:
-        all_image_files.extend(glob.glob(os.path.join(directoty, ext)))
-
-print(f'총 {len(all_image_files)}개 이미지 파일을 찾았습니다.')
-
-def Embedding_process(image_paths):
-    # hugging face에서 clip 사전학습 모델 불러오기
-    model = CLIPModel.from_pretrained('./clip_finetuned')
-    processor = CLIPProcessor.from_pretrained('./clip_finetuned')
-
-    # CLIP 프로세서로 이미지 임베딩
+def embedding_process(image_paths, model, processor, batch_size=32):
+    """이미지 경로 리스트를 받아 배치 단위로 임베딩을 생성합니다."""
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model.to(device)
+    
     image_embeddings = []
-    for image_path in image_paths:
-        # PIL라이브러리로 이미지 열기
-        image = Image.open(image_path)
+    
+    for i in tqdm(range(0, len(image_paths), batch_size), desc="이미지 임베딩 중"):
+        batch_paths = image_paths[i:i+batch_size]
+        try:
+            images = [Image.open(path).convert("RGB") for path in batch_paths]
+            inputs = processor(images=images, return_tensors='pt', padding=True).to(device)
+            
+            with torch.no_grad():
+                features = model.get_image_features(**inputs)
+            image_embeddings.append(features.cpu())
+        except Exception as e:
+            print(f"오류 발생: {batch_paths} 처리 중. 건너뜁니다. 오류: {e}")
+            
+    if not image_embeddings:
+        return np.array([])
+        
+    tensor_cat = torch.cat(image_embeddings, dim=0)
+    return tensor_cat.numpy()
 
-        # 각 이미지를 모델 입력형태로 가공
-        inputs = processor(images=image, return_tensors='pt', padding=True)
-
-        # 모델에 입력값을 넣어 이미지 임베딩 추출
-        with torch.no_grad():  # torch.no_grad() : 불필요한 연산을 막아 속도 향상 및 메모리 절약
-            features = model.get_image_features(**inputs)
-
-        # 추출된 임베딩을 리스트에 추가
-        image_embeddings.append(features)
-
-    # 임베딩 벡터 .npy로 저장
-    tensor_cat = torch.cat(image_embeddings, dim = 0) # ex) (1, 512) -> (N, 512)로 합쳐짐
-
-    # 텐서를 CPU로 이동 후 numpy배열 변환 : numpy변환이 cpu에서만 가능
-    numpy_array = tensor_cat.cpu().numpy()
-
-    return numpy_array
-
-# 이미지 임베딩
-np_array = Embedding_process(all_image_files)
-
-# .npy파일 저장
-np.save('image_embeddings_finetuned.npy', np_array)
-print(f'임베딩 배열 저장완료! 최종배열 형태 : {np_array.shape}')
-
-# 이미지 파일경로 .pkl형태로 저장
-with open('image_paths_finetuned.pkl', 'wb') as f:
-    pickle.dump(all_image_files, f)
-print('이미지 파일 경로를 "image_paths.pkl"파일로 저장했습니다.')
-
+if __name__ == "__main__":
+    base_dir = os.getcwd()
+    model_path = os.path.join(base_dir, 'clip_finetuned')
+    embedding_file = os.path.join(base_dir, 'image_embeddings_finetuned.npy')
+    paths_file = os.path.join(base_dir, 'image_paths_finetuned.pkl')
+    
+    all_image_files = get_all_image_paths(base_dir)
+    print(f'총 {len(all_image_files)}개 이미지 파일을 찾았습니다.')
+    
+    model = CLIPModel.from_pretrained(model_path)
+    processor = CLIPProcessor.from_pretrained(model_path)
+    
+    np_array = embedding_process(all_image_files, model, processor)
+    
+    if np_array.size > 0:
+        np.save(embedding_file, np_array)
+        print(f'임베딩 배열 저장완료! 최종배열 형태 : {np_array.shape}')
+        
+        with open(paths_file, 'wb') as f:
+            pickle.dump(all_image_files, f)
+        print(f'이미지 파일 경로를 "{os.path.basename(paths_file)}"파일로 저장했습니다.')
+    else:
+        print("생성된 임베딩이 없어 파일을 저장하지 않습니다.")

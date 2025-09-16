@@ -12,6 +12,24 @@ import gc
 
 
 ### 함수정의 ###
+def create_image_path_df(image_dir):
+    """지정된 디렉토리에서 이미지 파일 경로를 찾아 데이터프레임을 생성합니다."""
+    image_path_list = glob.glob(os.path.join(image_dir, '*.*'))
+    if not image_path_list:
+        print(f"경고: '{image_dir}' 디렉토리에서 이미지를 찾을 수 없습니다.")
+        return pd.DataFrame({'idx': [], 'image_path': []})
+
+    # 파일 이름에서 확장자를 제외하고 인덱스로 사용
+    idx_list = [os.path.splitext(os.path.basename(p))[0] for p in image_path_list]
+    
+    path_df = pd.DataFrame(
+        {
+            'idx' : idx_list,
+            'image_path' : image_path_list
+        }
+    )
+    path_df['idx'] = pd.to_numeric(path_df['idx'], errors='coerce')
+    return path_df.dropna(subset=['idx']).astype({'idx': 'int'})
 
 def process_image(row, num_augmentations, transform_pipeline, output_dir):
     """
@@ -67,24 +85,21 @@ def process_image(row, num_augmentations, transform_pipeline, output_dir):
 ##### 데이터 증강 작업 #####
 
 # caption csv 불러오기
-image_path = os.path.join(os.getcwd() + '\\images_100')
-csv_path = os.getcwd()
-caption_df = pd.read_csv(os.path.join(csv_path) + '\\image_to_text_en.csv')
+base_dir = os.getcwd()
+original_image_dir = os.path.join(base_dir, 'images_100')
+caption_csv_path = os.path.join(base_dir, 'image_to_text_en.csv')
+
+if not os.path.exists(caption_csv_path):
+    raise FileNotFoundError(f"캡션 파일이 존재하지 않습니다: {caption_csv_path}")
+caption_df = pd.read_csv(caption_csv_path)
 
 # image_path 불러온 후 데이터프레임 형성
-image_path = os.path.join(os.getcwd() + '\\images_100')
-image_path_list = glob.glob(os.path.join(image_path + '/*.*'))
-idx_list = [p.split('\\')[-1].split('.')[0] for p in image_path_list]
-path_df = pd.DataFrame(
-    {
-        'idx' : idx_list,
-        'image_path' : image_path_list
-    }
-)
-path_df['idx'] = path_df['idx'].astype('int') # pd.merge를 위한 타입 맞추기
+path_df = create_image_path_df(original_image_dir)
 
 # cation과 image_path_list 합체
-df = pd.merge(caption_df, path_df, how = 'inner', on = 'idx')
+if path_df.empty:
+    raise ValueError(f"'{original_image_dir}'에 유효한 이미지 파일이 없습니다.")
+df = pd.merge(caption_df, path_df, how='inner', on='idx')
 df.reset_index(drop = True, inplace = True)
 print(f'원본 데이터 개수: {len(df)}')
 
@@ -110,7 +125,7 @@ transform = A.Compose([
 ])
 
 ### 2. 최종 csv파일 생성 및 데이터 기록
-final_csv_path = os.path.join(csv_path, 'final_caption.csv')
+final_csv_path = os.path.join(base_dir, 'final_caption.csv')
 num_augmentations_per_image = 10
 
 with open(final_csv_path, 'w', newline = '', encoding = 'utf-8') as f:
@@ -134,4 +149,3 @@ with open(final_csv_path, 'w', newline = '', encoding = 'utf-8') as f:
 
     # 루프 종료 후 가비지 컬렉터 호출(안정성을 위한 옵션)
     gc.collect()
-

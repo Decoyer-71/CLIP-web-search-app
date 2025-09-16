@@ -1,7 +1,4 @@
 import os
-
-from IPython.core.pylabtools import figsize
-
 os.environ['KMP_DUPLICATE_LIB_OK']='True'
 
 import numpy as np
@@ -15,7 +12,7 @@ from torch.optim import AdamW
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 
-from tqdm.notebook import tqdm
+from tqdm import tqdm
 
 ### 클래스 정의 ###
 # --- pytorch에서 Dataset클래스 상속받아 커스텀데이터셋 만들기---
@@ -30,7 +27,7 @@ class ImageCaptionDataset(Dataset):
 
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
-        image_path = f"{self.image_base_path}{row['image_path']}"
+        image_path = os.path.join(self.image_base_path, row['image_path']) if self.image_base_path else row['image_path']
         image = Image.open(image_path).convert(
             'RGB')  # 이미지 파일을 통일하기위해 RGB로 CONVERT(정규화 개념 - CLIP모델 입력 기대값은 RGB(3개 채널)이다.)
         caption = row['caption_en']
@@ -52,10 +49,12 @@ class ImageCaptionDataset(Dataset):
 #####################################################
 
 ### 데이터 불러오기
-csv_path = os.path.join(os.getcwd() + '\\final_caption.csv')
-final_df = pd.read_csv(csv_path)
-final_df.set_index('idx', inplace = True)
+base_dir = os.getcwd()
+csv_path = os.path.join(base_dir, 'final_caption.csv')
+save_path = os.path.join(base_dir, 'clip_finetuned')
 
+final_df = pd.read_csv(csv_path)
+final_df.set_index('idx', inplace=True, drop=False) # Keep 'idx' column
 # print(f'총 데이터 개수 (원본 + 증강) : {len(final_df)}')
 # print(f'\n--- 최종 데이터프레임 (상위 5개) ---')
 # print(final_df.head())
@@ -65,8 +64,8 @@ final_df.set_index('idx', inplace = True)
 ##### 모델 학습 ####
 
 # -- 모델 준비 ---
-# GPU 설정
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f"Using device: {device}")
 
 # 학습데이터 : 검증데이터 = 6:4
 train_df, test_df = train_test_split(final_df, test_size=0.4, random_state=42)
@@ -103,7 +102,7 @@ for epoch in tqdm(range(num_epochs), desc = 'Epochs') :
     model.train() # 모델 학습 모드 설정
     total_train_loss = 0
 
-    for batch in tqdm(train_dataloader, desc = 'Training', leave = False) :
+    for batch in tqdm(train_dataloader, desc = f'Epoch {epoch+1}/{num_epochs} Training', leave = False) :
         # 배치 데이터를 device로 이동
         batch = {k:v.to(device) for k, v in batch.items()} # key : 'pixel_values', 'input_idx', 'attention_mask' / value : pt tensor
 
@@ -126,7 +125,7 @@ for epoch in tqdm(range(num_epochs), desc = 'Epochs') :
     total_test_loss = 0
 
     with torch.no_grad() : # 그래디언트 계산 비활성화
-        for batch in tqdm(test_dataloader, desc = 'Testing', leave = False) :
+        for batch in tqdm(test_dataloader, desc = f'Epoch {epoch+1}/{num_epochs} Testing', leave = False) :
             batch = {k:v.to(device) for k, v in batch.items()}
 
             # 입력
@@ -163,7 +162,7 @@ for epoch in tqdm(range(num_epochs), desc = 'Epochs') :
 # plt.show()
 
 # -- 파인튜닝 모델 저장 --
-save_path = './clip_finetuned'
+os.makedirs(save_path, exist_ok=True)
 model.save_pretrained(save_path)
 processor.save_pretrained(save_path)
 
