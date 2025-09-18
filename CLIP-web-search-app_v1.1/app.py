@@ -2,100 +2,118 @@ import os
 os.environ['OPENBLAS_NUM_THREADS'] = '1'
 os.environ['KMP_DUPLICATE_LIB_OK']='True'
 
-import pandas as pd
 import torch
 import numpy as np
 import pickle
-from transformers import CLIPProcessor, CLIPModel
-import streamlit as st
 from PIL import Image
+import base64
+from io import BytesIO
+
+from fastapi import FastAPI, Request #request는 사용하고 있음
+from fastapi.responses import HTMLResponse
+
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from transformers import CLIPProcessor, CLIPModel
+from contextlib import asynccontextmanager
 
 ###################함수 정의######################
 
-@st.cache_resource
-def load_model_and_data():
+def get_image_base64(image_path):
+    """이미지 파일을 Base64 문자열로 인코딩합니다."""
+    with open(image_path, "rb") as img_file:
+        return base64.b64encode(img_file.read()).decode('utf-8')
+
+def similarity_search(text_embedding, image_embeddings, image_paths, top_k=10):
     """
-    CLIP 모델, 프로세서, 이미지 임베딩과 경로를 불러옵니다.
-    :return: model, processor, image_embedding, image_paths
+    텍스트 임베딩과 이미지 임베딩 간의 코사인 유사도를 계산하여 상위 K개 결과를 반환합니다.
     """
+    # 이미지 임베딩을 텐서로 변환
+    image_embeddings_tensor = torch.from_numpy(image_embeddings)
+    
+    # 코사인 유사도 계산 (모든 이미지에 대해 한 번에 계산)
+    # text_embedding: [1, 512], image_embeddings_tensor: [N, 512]
+    # 유사도 점수는 [N] 형태의 텐서로 계산됩니다.
+    similarities = torch.nn.functional.cosine_similarity(text_embedding, image_embeddings_tensor)
+    
+    # 상위 K개의 점수와 인덱스 찾기
+    top_k_scores, top_k_indices = torch.topk(similarities, k=top_k)
+    
+    results = []
+    for i in range(top_k):
+        score = top_k_scores[i].item()
+        path = image_paths[top_k_indices[i]]
+        results.append({
+            "rank": i + 1,
+            "score": round(score, 4),
+            "path": path,
+            "image_base64": get_image_base64(path)
+        })
+        
+    return results
 
-    # CLIP 모델과 프로세서 불러오기
-    model = CLIPModel.from_pretrained('./clip_finetuned')
-    processor = CLIPProcessor.from_pretrained('./clip_finetuned')
+################# FastAPI 설정 ###############################
 
-    # 이미지 특징 벡터(.npy), 경로(.pkl) 불러오기
-    with open('image_paths_finetuned.pkl', 'rb') as f:
-        image_paths = pickle.load(f)
+ml_models = {}
 
-    image_embedding = np.load('image_embeddings_finetuned.npy')
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 앱 시작 시 모델 로드
+    base_dir = os.getcwd()
+    model_path = os.path.join(base_dir, 'clip_finetuned')
+    paths_file = os.path.join(base_dir, 'image_paths_finetuned.pkl')
+    embedding_file = os.path.join(base_dir, 'image_embeddings_finetuned.npy')
+    
+    print("모델 및 데이터를 메모리에 로드중...")
+    ml_models['model'] = CLIPModel.from_pretrained(model_path)
+    ml_models['processor'] = CLIPProcessor.from_pretrained(model_path)
+    with open(paths_file, 'rb') as f:
+        ml_models['image_paths'] = pickle.load(f)
+    ml_models['image_embeddings'] = np.load(embedding_file)
+    print("✅ 모델 및 데이터 로딩완료")
+    print(f"총 {len(ml_models['image_paths'])}개 이미지 경로, {ml_models['image_embeddings'].shape} 형태의 임베딩 벡터 준비완료")
+    yield
+    # 앱 종료 시 모델 정리 (필요 시)
+    ml_models.clear()
 
-    return model, processor, image_embedding, image_paths
+app = FastAPI(lifespan=lifespan)
 
-# 텍스트 임베딩 - 이미지 임베딩 유사도 계산 함수
-def similarity_caluation(text_embedding, image_embedding, image_path):
-    sim_score_lst = []
-    for idx in range(len(image_embedding)):
-        similarity = torch.nn.functional.cosine_similarity(text_embedding, image_embedding[idx])
-        sim_score_lst.append(round(similarity.item(), 3))
+static_dir = os.path.join(os.getcwd(), "static")
+templates_dir = os.path.join(os.getcwd(), "templates")
+# 정적 파일(CSS, JS) 및 템플릿 설정
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
+templates = Jinja2Templates(directory=templates_dir)
 
-    similarity_df = pd.DataFrame(
-        {
-            'Score' : sim_score_lst,
-            'Image_path' : image_path
-        }
-    )
-    similarity_df = similarity_df.sort_values('Score', ascending=False).head(5)
-    similarity_df['Rank'] = [num + 1 for num in range(len(similarity_df))]
-    similarity_df.set_index('Rank', inplace=True)
+@app.get("/", response_class=HTMLResponse)
+async def read_root(request: Request):
+    """메인 페이지를 렌더링합니다. 검색 결과가 없는 초기 상태입니다."""
+    return templates.TemplateResponse("index.html", {"request": request, "results": []})
 
-    return similarity_df
+@app.get("/search")
+async def search_images(request: Request, query: str):
+    """텍스트 쿼리를 받아 이미지 검색 결과를 포함한 전체 페이지를 렌더링하여 반환합니다."""
+    if not query:
+        # 검색어가 없으면 결과 없이 메인 페이지만 다시 보여줍니다.
+        return templates.TemplateResponse("index.html", {"request": request, "results": []})
 
-#################UI 구성###############################
-
-# st.title('이미지 검색 엔진')
-st.markdown("<h1 style='text-align: center; color: black;'>이미지 검색 엔진</h1>", unsafe_allow_html=True)
-
-st.write('모델 및 데이터를 메모리에 로드중...')
-
-model, processor, image_embedding, image_path = load_model_and_data()
-
-st.success('✅ 모델 및 데이터 로딩완료')
-st.info(f'총 {len(image_path)}개 이미지 경로, {image_embedding.shape} 형태의 임베딩 벡터 준비완료')
-
-
-##############사용자 검색 로직 구현#############################
-
-# 1) 사용자 텍스트 입력받기
-text_query = st.text_input('검색어를 입력하세요 :', placeholder='ex) an woman of cartoon style' )
-
-# 2) 검색로직 실행
-# 텍스트 임베딩 처리
-if text_query :
-    st.write(f'{text_query}(으)로 이미지를 검색합니다...')
-
-    # 단일 검색어를 모델에 넣어 처리
+    processor = ml_models['processor']
+    model = ml_models['model']
+    
+    # 텍스트 임베딩 생성
     with torch.no_grad():
-        inputs = processor(text = text_query, return_tensors = 'pt', padding = True)
-
-        # get_text_features 메서드로 텍스트 임베딩만 추출
+        inputs = processor(text=query, return_tensors='pt', padding=True, truncation=True)
         text_features = model.get_text_features(**inputs)
 
-    st.success('텍스트 임베딩 생성완료')
+    # 유사도 검색 수행
+    search_results = similarity_search(
+        text_features,
+        ml_models['image_embeddings'],
+        ml_models['image_paths'],
+        top_k=10
+    )
 
-    # 불러오기 한 이미지 임베딩 numpy 배열 -> tensor 변환
-    embedding_tensor = torch.from_numpy(image_embedding)
-
-    # 텍스트-이미지 유사도 계산
-    sim_top5 = similarity_caluation(text_features, embedding_tensor, image_path)
-
-    # 유사도 결과 전시
-    # st.header('상위 5개 이미지 유사도 결과')
-    st.markdown("<h2 style='text-align: center; color: black;'>상위 5개 이미지 유사도 결과</h1>", unsafe_allow_html=True)
-    st.dataframe(sim_top5['Score'])
-
-    # 상위 5개 이미지 불러오기
-    top5_path = [path for path in sim_top5['Image_path']]
-
-    for num in range(len(top5_path)) :
-        img_object = Image.open(top5_path[num])
-        st.image(img_object, caption = f'후보 {num + 1}순위')
+    # 검색 결과를 포함하여 전체 페이지를 렌더링하여 반환
+    return templates.TemplateResponse("index.html", {
+        "request": request, 
+        "results": search_results
+    })
