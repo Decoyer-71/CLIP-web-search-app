@@ -21,7 +21,10 @@ def get_all_image_paths(base_dir):
             print(f"경고: 디렉토리가 존재하지 않습니다: {directory}")
             continue
         for ext in extensions:
-            all_image_files.extend(glob.glob(os.path.join(directory, ext)))
+            # 절대 경로 대신 상대 경로로 변환하여 저장합니다.
+            for file_path in glob.glob(os.path.join(directory, ext), recursive=True):
+                relative_path = os.path.relpath(file_path, start=base_dir).replace(os.sep, '/')
+                all_image_files.append(relative_path)
             
     return sorted(list(set(all_image_files)))
 
@@ -35,7 +38,8 @@ def embedding_process(image_paths, model, processor, batch_size=32):
     for i in tqdm(range(0, len(image_paths), batch_size), desc="이미지 임베딩 중"):
         batch_paths = image_paths[i:i+batch_size]
         try:
-            images = [Image.open(path).convert("RGB") for path in batch_paths]
+            # Docker 컨테이너 내의 /app 경로를 기준으로 파일을 엽니다.
+            images = [Image.open(os.path.join(base_dir, path)).convert("RGB") for path in batch_paths]
             inputs = processor(images=images, return_tensors='pt', padding=True).to(device)
             
             with torch.no_grad():
@@ -62,7 +66,7 @@ if __name__ == "__main__":
     model = CLIPModel.from_pretrained(model_path)
     processor = CLIPProcessor.from_pretrained(model_path)
     
-    np_array = embedding_process(all_image_files, model, processor)
+    np_array = embedding_process(all_image_files, model, processor, base_dir=base_dir)
     
     if np_array.size > 0:
         np.save(embedding_file, np_array)

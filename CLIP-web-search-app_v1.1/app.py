@@ -8,8 +8,8 @@ import pickle
 from PIL import Image
 import base64
 from io import BytesIO
-
-from fastapi import FastAPI, Request #request는 사용하고 있음
+from typing import List, Dict, Any
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 
 from fastapi.staticfiles import StaticFiles
@@ -24,7 +24,7 @@ def get_image_base64(image_path):
     with open(image_path, "rb") as img_file:
         return base64.b64encode(img_file.read()).decode('utf-8')
 
-def similarity_search(text_embedding, image_embeddings, image_paths, top_k=10):
+def similarity_search(text_embedding: torch.Tensor, image_embeddings: np.ndarray, image_paths: List[str], top_k: int = 10) -> List[Dict[str, Any]]:
     """
     텍스트 임베딩과 이미지 임베딩 간의 코사인 유사도를 계산하여 상위 K개 결과를 반환합니다.
     """

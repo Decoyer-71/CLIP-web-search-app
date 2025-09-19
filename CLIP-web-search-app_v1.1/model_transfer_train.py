@@ -27,7 +27,7 @@ class ImageCaptionDataset(Dataset):
 
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
-        image_path = os.path.join(self.image_base_path, row['image_path']) if self.image_base_path else row['image_path']
+        image_path = os.path.join(self.image_base_path, row['image_path'].replace('\\', '/')) if self.image_base_path else row['image_path'].replace('\\', '/')
         image = Image.open(image_path).convert(
             'RGB')  # 이미지 파일을 통일하기위해 RGB로 CONVERT(정규화 개념 - CLIP모델 입력 기대값은 RGB(3개 채널)이다.)
         caption = row['caption_en']

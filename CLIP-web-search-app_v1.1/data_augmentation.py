@@ -14,7 +14,7 @@ import gc
 ### 함수정의 ###
 def create_image_path_df(image_dir):
     """지정된 디렉토리에서 이미지 파일 경로를 찾아 데이터프레임을 생성합니다."""
-    image_path_list = glob.glob(os.path.join(image_dir, '*.*'))
+    image_path_list = [p.replace(os.sep, '/') for p in glob.glob(os.path.join(image_dir, '*.*'))]
     if not image_path_list:
         print(f"경고: '{image_dir}' 디렉토리에서 이미지를 찾을 수 없습니다.")
         return pd.DataFrame({'idx': [], 'image_path': []})
@@ -66,7 +66,7 @@ def process_image(row, num_augmentations, transform_pipeline, output_dir):
             # 새로운 파일 이름을 생성하고 증강된 이미지를 저장
             new_idx = f'{original_idx}_aug_{i + 1}'
             new_filename = f"{new_idx}.jpg"
-            new_image_path = os.path.join(output_dir, new_filename)
+            new_image_path = os.path.join(output_dir, new_filename).replace(os.sep, '/')
 
             # opencv는 bgr형식 저장이므로, 다시 rgb에서 bgr로 변환
             cv2.imwrite(new_image_path, cv2.cvtColor(augmented_image, cv2.COLOR_RGB2BGR))
@@ -135,7 +135,7 @@ with open(final_csv_path, 'w', newline = '', encoding = 'utf-8') as f:
     # 원본 데이터 기록
     print('원본 데이터를 csv파일에 쓰는 중...')
     for index, row in tqdm(df.iterrows(), total = len(df)):
-        writer.writerow([row['idx'], row['caption_en'], row['image_path']])
+        writer.writerow([row['idx'], row['caption_en'], row['image_path'].replace(os.sep, '/')])
 
     # 증강 데이터를 함수를 통해 처리하고 바로 기록
     print('\n 데이터 증강 및 csv 기록 시작...')
