@@ -14,7 +14,9 @@ import gc
 ### 함수정의 ###
 def create_image_path_df(image_dir):
     """지정된 디렉토리에서 이미지 파일 경로를 찾아 데이터프레임을 생성합니다."""
-    image_path_list = [p.replace(os.sep, '/') for p in glob.glob(os.path.join(image_dir, '*.*'))]
+    # 프로젝트 루트 기준 상대 경로로 변경
+    base_dir = os.path.dirname(image_dir)
+    image_path_list = [os.path.relpath(p, base_dir).replace(os.sep, '/') for p in glob.glob(os.path.join(image_dir, '*.*'))]
     if not image_path_list:
         print(f"경고: '{image_dir}' 디렉토리에서 이미지를 찾을 수 없습니다.")
         return pd.DataFrame({'idx': [], 'image_path': []})
@@ -135,7 +137,8 @@ with open(final_csv_path, 'w', newline = '', encoding = 'utf-8') as f:
     # 원본 데이터 기록
     print('원본 데이터를 csv파일에 쓰는 중...')
     for index, row in tqdm(df.iterrows(), total = len(df)):
-        writer.writerow([row['idx'], row['caption_en'], row['image_path'].replace(os.sep, '/')])
+        # 이미 create_image_path_df에서 상대경로로 변경되었으므로 그대로 사용
+        writer.writerow([row['idx'], row['caption_en'], row['image_path']])
 
     # 증강 데이터를 함수를 통해 처리하고 바로 기록
     print('\n 데이터 증강 및 csv 기록 시작...')
@@ -149,3 +152,10 @@ with open(final_csv_path, 'w', newline = '', encoding = 'utf-8') as f:
 
     # 루프 종료 후 가비지 컬렉터 호출(안정성을 위한 옵션)
     gc.collect()
+    
+# print("="*100)
+# print(base_dir)
+# print(original_image_dir)
+# print(caption_csv_path)
+# print(final_csv_path)
+# print("="*100)

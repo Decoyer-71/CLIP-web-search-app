@@ -28,7 +28,7 @@ def get_all_image_paths(base_dir):
             
     return sorted(list(set(all_image_files)))
 
-def embedding_process(image_paths, model, processor, batch_size=32):
+def embedding_process(image_paths, model, processor, base_dir, batch_size=32):
     """이미지 경로 리스트를 받아 배치 단위로 임베딩을 생성합니다."""
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model.to(device)
@@ -38,7 +38,6 @@ def embedding_process(image_paths, model, processor, batch_size=32):
     for i in tqdm(range(0, len(image_paths), batch_size), desc="이미지 임베딩 중"):
         batch_paths = image_paths[i:i+batch_size]
         try:
-            # Docker 컨테이너 내의 /app 경로를 기준으로 파일을 엽니다.
             images = [Image.open(os.path.join(base_dir, path)).convert("RGB") for path in batch_paths]
             inputs = processor(images=images, return_tensors='pt', padding=True).to(device)
             
