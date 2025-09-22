@@ -22,6 +22,8 @@ jobs:
       # 1. GitHub 저장소의 코드를 가상 서버로 내려받음 (Checkout)
       - name: Check out the repo
         uses: actions/checkout@v4
+        with:
+          lfs: true # Git LFS 파일을 다운로드하는 옵션을 추가합니다.
 
       # 2. GHCR에 로그인하기 위한 준비
       - name: Log in to the Container registry
