@@ -42,7 +42,9 @@ def similarity_search(text_embedding: torch.Tensor, image_embeddings: np.ndarray
     results = []
     for i in range(top_k):
         score = top_k_scores[i].item()
-        relative_path = image_paths[top_k_indices[i]]
+        # Windows 경로 구분자(\)를 Linux/웹 표준(/)으로 교체
+        relative_path = image_paths[top_k_indices[i]].replace('\\', '/')
+        
         # Windows와 Linux 경로 문제를 해결하기 위해 os.path.join 사용
         # Docker 컨테이너의 작업 디렉토리(/app)를 기준으로 절대 경로 생성
         full_path = os.path.join(os.getcwd(), relative_path)
