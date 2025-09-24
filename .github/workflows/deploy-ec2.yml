@@ -1,4 +1,4 @@
-# 워크플로우 이름
+# 워크플로우 이름(학습목적으로 ec2 보안그룹은 열어둠)
 name: Deploy to AWS EC2
 
 # 실행 조건: master 브랜치에 push 이벤트 발생 시
