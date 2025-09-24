@@ -1,0 +1,78 @@
+name: Build and Deploy to EC2
+
+on:
+  push:
+    branches: [ "master" ]
+
+jobs:
+  # 1. 첫 번째 작업: Docker 이미지 빌드 및 푸시
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./CLIP-web-search-app_v1.1
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  # 2. 두 번째 작업: EC2에 배포
+  deploy:
+    # 'build' 작업이 성공적으로 끝나야만 이 'deploy' 작업을 시작합니다.
+    needs: build
+    
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            # 1) GHCR에 로그인 (EC2 서버가 private 이미지를 받아올 수 있도록)
+            echo ${{ secrets.GHCR_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            
+            # 2) 최신 Docker 이미지 받아오기
+            docker pull ghcr.io/${{ github.repository }}:${{ github.sha }}
+
+            # 3) 기존 실행중이던 컨테이너 중지 및 삭제
+            docker stop my-ai-app-container || true
+            docker rm my-ai-app-container || true
+
+            # 4) 새로 받은 이미지로 컨테이너 실행
+            docker run -d --name my-ai-app-container -p 80:8080 ghcr.io/${{ github.repository }}:${{ github.sha }}
+
+            # 5) 불필요한 docker 이미지 정리
+            docker image prune -af
