@@ -1,16 +1,20 @@
-name: Build and Deploy to EC2
+name: Build and Deploy to EC2 using AWS ECR
 
 on:
   push:
     branches: [ "master" ]
 
+# ECR 주소와 리포지토리 이름을 변수로 설정하여 재사용
+env:
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
+  ECR_REPOSITORY: web-search-app # AWS ECR 리포지토리 이름
+
 jobs:
-  # 1. 첫 번째 작업: Docker 이미지 빌드 및 푸시
+  # 1. 첫 번째 작업: Docker 이미지 빌드 및 ECR에 푸시
   build:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
 
     steps:
       - name: Check out the repo
@@ -18,35 +22,37 @@ jobs:
         with:
           lfs: true
 
-      - name: Log in to the Container registry
-        uses: docker/login-action@v3
+      # 1-1. GHCR 대신 AWS 자격 증명 구성
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Extract metadata (tags, labels) for Docker
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository }}
+      # 1-2. GHCR 대신 AWS ECR에 로그인
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: ./CLIP-web-search-app_v1.1
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+      # 1-3. Docker 이미지를 빌드하고 ECR로 푸시
+      - name: Build, tag, and push image to Amazon ECR
+        id: build-image
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPOSITORY:latest ./CLIP-web-search-app_v1.1
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
   # 2. 두 번째 작업: EC2에 배포
   deploy:
-    # 'build' 작업이 성공적으로 끝나야만 이 'deploy' 작업을 시작합니다.
-    needs: build
-    
+    needs: build # build 작업이 끝나야 시작
     runs-on: ubuntu-latest
 
     steps:
+      # 2-1. 배포 단계에서도 AWS 자격 증명 구성 (EC2 스크립트에서 AWS 명령어 사용을 위해)
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
@@ -61,18 +67,18 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
-            # 1) GHCR에 로그인 (EC2 서버가 private 이미지를 받아올 수 있도록)
-            echo ${{ secrets.GHCR_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            
-            # 2) 최신 Docker 이미지 받아오기
-            docker pull ghcr.io/${{ github.repository }}:${{ github.sha }}
+            # 2-2. GHCR 대신 AWS ECR에 로그인하는 명령어로 변경
+            aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin $ECR_REGISTRY
 
-            # 3) 기존 실행중이던 컨테이너 중지 및 삭제
+            # 2-3. ECR 주소에서 최신 Docker 이미지 받아오기
+            docker pull ${{ needs.build.outputs.image }}
+
+            # 기존 컨테이너 중지 및 삭제
             docker stop my-ai-app-container || true
             docker rm my-ai-app-container || true
 
-            # 4) 새로 받은 이미지로 컨테이너 실행
-            docker run -d --name my-ai-app-container -p 80:8080 ghcr.io/${{ github.repository }}:${{ github.sha }}
-
-            # 5) 불필요한 docker 이미지 정리
+            # ECR 이미지로 컨테이너 실행
+            docker run -d --name my-ai-app-container -p 80:8080 ${{ needs.build.outputs.image }}
+            
+            # 불필요한 Docker 이미지 정리
             docker image prune -af
